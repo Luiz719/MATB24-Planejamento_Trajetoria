@@ -146,11 +146,8 @@ class Bug1:
                 self.stop()
     
 
-# Usage example
 if __name__ == "__main__":
-    # Initialize system
     pioneer = Pioneer3at()
     navigator = Bug1(pioneer, Q_GOAL)
     
-    # Start navigation
     navigator.run()
