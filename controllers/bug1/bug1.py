@@ -1,162 +1,156 @@
-from controller import Robot, DistanceSensor, InertialUnit, PositionSensor
+from controller import Robot, Motor, GPS, Compass, DistanceSensor
+from wall_circumvention import *
+import sys
 import math
 
-# Configuration Parameters
-MAX_SPEED = 6.28            
-WALL_THRESHOLD = 0.3        # Wall detection distance [m]
-TURN_FACTOR = 0.25          # turn gain
-TURN_ANGLE = 90             # Default turn angle [degrees]
-MOVE_DISTANCE = 0.07        # Straight movement distance for circumvention [m]
-MOVE_DISTANCE2 = 0.17       # Straight movement distance for circumvention - step 2[m]
-KP_ANGLE = 0.2              # IMU turn control gain
-WHEEL_RADIUS = 0.033        # Wheel radius [m]
+class Pioneer3at:
+    def __init__(self):
+        self.robot = Robot()
+        self.timestep = int(self.robot.getBasicTimeStep())
 
-# Initialize robot
-robot = Robot()
-timestep = int(robot.getBasicTimeStep())
+        # Configure motors
+        self.wheels = {
+            'front_left': self.robot.getDevice('front left wheel'),
+            'front_right': self.robot.getDevice('front right wheel'),
+            'back_left': self.robot.getDevice('back left wheel'),
+            'back_right': self.robot.getDevice('back right wheel')
+        }
+        for wheel in self.wheels.values():
+            wheel.setPosition(float('inf'))
+            wheel.setVelocity(0.0)
 
-# Configure motors
-wheels = {
-    'front_left': robot.getDevice('front left wheel'),
-    'front_right': robot.getDevice('front right wheel'),
-    'back_left': robot.getDevice('back left wheel'),
-    'back_right': robot.getDevice('back right wheel')
-}
-for wheel in wheels.values():
-    wheel.setPosition(float('inf'))
-    wheel.setVelocity(0.0)
+        # Configure sensors
+        self.sensors = {
+            'left': self.robot.getDevice('so0'),
+            'center': self.robot.getDevice('so4'),
+            'right': self.robot.getDevice('so7'),
+            'back_left': self.robot.getDevice('so15'),
+            'back_right': self.robot.getDevice('so8'),
+            'imu': self.robot.getDevice('inertial unit'),
+            'enc_left': self.robot.getDevice('front left wheel sensor'),
+            'enc_right': self.robot.getDevice('front right wheel sensor')
+        }
+        for s in self.sensors.values():
+            if isinstance(s, (DistanceSensor, InertialUnit, PositionSensor)):
+                s.enable(self.timestep)
 
-# Configure sensors
-sensors = {
-    'left': robot.getDevice('so0'),
-    'center': robot.getDevice('so4'),
-    'right': robot.getDevice('so7'),
-    'back_left': robot.getDevice('so15'),
-    'back_right': robot.getDevice('so8'),
-    'imu': robot.getDevice('inertial unit'),
-    'enc_left': robot.getDevice('front left wheel sensor'),
-    'enc_right': robot.getDevice('front right wheel sensor')
-}
-for s in sensors.values():
-    if isinstance(s, (DistanceSensor, InertialUnit, PositionSensor)):
-        s.enable(timestep)
-
-# State machine states
-STATE_NORMAL = 0
-STATE_CIRCUMVENT = 1
-
-current_state = STATE_NORMAL
-current_wall_side = None
-original_wall_side = None  # For L-shape detection
-maneuver_step = 0
-initial_encoder = 0
-
-def sensor_to_distance(sensor):
-    return (1024 - sensor.getValue()) / 204.8
-
-def set_speeds(left, right):
-    wheels['front_left'].setVelocity(left)
-    wheels['back_left'].setVelocity(left)
-    wheels['front_right'].setVelocity(right)
-    wheels['back_right'].setVelocity(right)
-
-def get_yaw():
-    return math.degrees(sensors['imu'].getRollPitchYaw()[2]) % 360
-
-def rotate(target_angle):
-    """Precision turn using IMU"""
-    while robot.step(timestep) != -1:
-        current = get_yaw()
-        error = (target_angle - current + 180) % 360 - 180
-        if abs(error) < 1.0:
-            break
-        speed = KP_ANGLE * error
-        speed = max(min(speed, MAX_SPEED), -MAX_SPEED)
-        set_speeds(-speed, speed)
-
-def get_travel_distance():
-    """Get distance traveled in meters using encoder radians"""
-    return (sensors['enc_left'].getValue() + 
-            sensors['enc_right'].getValue()) / 2 * WHEEL_RADIUS
-
-def start_circumvention(direction):
-    global current_state, maneuver_step, initial_encoder, original_wall_side
-    current_state = STATE_CIRCUMVENT
-    maneuver_step = 0
-    initial_encoder = get_travel_distance()
-    original_wall_side = current_wall_side  
-    print(f"Starting {direction} circumvention")
-
-while robot.step(timestep) != -1:
-    # Read sensors
-    front = sensor_to_distance(sensors['center'])
-    left = sensor_to_distance(sensors['left'])
-    right = sensor_to_distance(sensors['right'])
-    back_left = sensor_to_distance(sensors['back_left'])
-    back_right = sensor_to_distance(sensors['back_right'])
-
-    if current_state == STATE_NORMAL:
-        if front < WALL_THRESHOLD:
-            if left > right:
-                print("Front wall - turning left")
-                rotate((get_yaw() + TURN_ANGLE) % 360)
-                current_wall_side = 'right'
-            else:
-                print("Front wall - turning right")
-                rotate((get_yaw() - TURN_ANGLE) % 360)
-                current_wall_side = 'left'
-            continue
-
-        if current_wall_side == 'left':
-            if left < WALL_THRESHOLD:
-                error = (WALL_THRESHOLD - left) * TURN_FACTOR
-                set_speeds(MAX_SPEED - error, MAX_SPEED + error)
-            else:
-                start_circumvention('left')
-        elif current_wall_side == 'right':
-            if right < WALL_THRESHOLD:
-                error = (WALL_THRESHOLD - right) * TURN_FACTOR
-                set_speeds(MAX_SPEED + error, MAX_SPEED - error)
-            else:
-                start_circumvention('right')
-        else:
-            set_speeds(MAX_SPEED, MAX_SPEED)
-
-    elif current_state == STATE_CIRCUMVENT:
-        traveled = get_travel_distance() - initial_encoder
+        self.gps = self.robot.getDevice('gps')
+        self.gps.enable(self.timestep)
+    
+    @property
+    def position(self):
+        return self.gps.getValues()[:2]
+    
+    @property
+    def orientation(self):
+        compass_values = self.compass.getValues()
+        return math.atan2(compass_values[0], compass_values[1])
+    
+    def get_sonar_readings(self):
+        return [s.getValue() for s in self.sonars]
+    
+    def set_speeds(self, left, right):
+        left = max(min(left, 4), 0)
+        right = max(min(right, 4), 0)
+        self.wheels['front_left'].setVelocity(left)
+        self.wheels['back_left'].setVelocity(left)
+        self.wheels['front_right'].setVelocity(right)
+        self.wheels['back_right'].setVelocity(right)
         
-        if maneuver_step == 0:  # First straight
-            if traveled < MOVE_DISTANCE:
-                set_speeds(MAX_SPEED, MAX_SPEED)
-            else:
-                rotate(get_yaw() + (-TURN_ANGLE if original_wall_side == 'right' else TURN_ANGLE))
-                maneuver_step = 1
-                initial_encoder = get_travel_distance()
-                
-        elif maneuver_step == 1:  # Second straight 
-            if traveled < MOVE_DISTANCE2:
-                set_speeds(MAX_SPEED, MAX_SPEED)
-            else:
-                # Check for L-shape
-                new_wall_side = original_wall_side 
-                distance = sensor_to_distance(sensors[new_wall_side])
-                
-                if distance < WALL_THRESHOLD:
-                    # L-shape detected - follow new wall
-                    current_wall_side = new_wall_side
-                    current_state = STATE_NORMAL
-                    print(f"L-shape detected, now following {new_wall_side} wall")
-                else:
-                    # Complete full circumvention
-                    rotate(get_yaw() + (-TURN_ANGLE if original_wall_side == 'right' else TURN_ANGLE))
-                    maneuver_step = 2
-                    initial_encoder = get_travel_distance()
-                    print("Proceeding with full circumvention")
+    def stop(self):
+        self.set_speeds(0, 0)
+        sys.exit(0)
+        
+    def step(self):
+        return self.robot.step(self.timestep)
 
-        elif maneuver_step == 2:  # Final straight
-            if traveled < MOVE_DISTANCE2:
-                set_speeds(MAX_SPEED, MAX_SPEED)
-            else:
-                current_state = STATE_NORMAL
-                current_wall_side = original_wall_side
-                print("Circumvention complete")
+class Bug1:
+    def __init__(self, robot, goal_position):
+        self.robot = robot
+        self.goal = goal_position
+        self.state = STATE_NORMAL
+        
+        self.goal_threshold = 0.2
+        self.return_threshold = 0.4
+        
+        self.obstacle_entry = None
+        self.closest_point = None
+        self.min_distance = float('inf')
+        self.init_first_route_time = None
+        self.init_sec_route_time = None
+        self.first_route_duration = None
+        self.sec_route_duration = None
+
+        self.movement = Circumvention(self.robot)
+
+    def boundary_following(self):
+        """Follow obstacle boundary until loop closure"""
+        current_pos = self.robot.position
+        current_dist = self.distance_to_goal()
+        
+        # Update closest point
+        if current_dist < self.min_distance:
+            self.min_distance = current_dist
+            self.closest_point = current_pos
+            self.first_route_duration = self.robot.robot.getTime() - self.init_first_route_time
+            self.init_sec_route_time = self.robot.robot.getTime()
+            
+        self.state = self.movement.circumvent_obstacle()
+        current_pos = self.robot.position
+
+        # Check loop closure
+        if self.distance_between(current_pos, self.obstacle_entry) < self.return_threshold:
+            print("Completed boundary circumnavigation")
+            self.sec_route_duration = self.robot.robot.getTime()-self.init_sec_route_time
+            self.init_first_route_time = None
+            self.state = STATE_RETURNING
+    
+    def move_to_closest_point(self):
+        if self.first_route_duration > self.sec_route_duration:
+            self.movement.rotate(self.get_yaw() + (2*TURN_ANGLE if self.movement.current_wall_side == 'right' else -2*TURN_ANGLE) % 360)
+            self.movement.current_wall_side = 'right' if  self.movement.current_wall_side == 'left' else 'right'
+
+        self.state = STATE_NORMAL
+
+    def distance_to_goal(self):
+        return math.hypot(self.goal[0]-self.robot.position[0],
+                         self.goal[1]-self.robot.position[1])
+    
+    def distance_between(self, p1, p2):
+        return math.hypot(p1[0]-p2[0], p1[1]-p2[1])
+    
+    def at_goal(self):
+        return self.distance_to_goal() < self.goal_threshold
+    
+    def run(self):
+        while self.robot.step() != -1:
+            if self.at_goal():
+                print("Goal reached!")
+                self.robot.stop()
+                return
+        
+            if self.state == STATE_NORMAL:
+                self.state, entry = self.movement.move()
+                if entry is not None and self.obstacle_entry is None:
+                    self.obstacle_entry = entry
+
+            elif self.state == STATE_CIRCUMVENT:
+                if self.init_first_route_time is None:
+                    self.init_first_route_time = self.robot.robot.getTime()
+                self.boundary_following()
+
+            elif self.state == STATE_RETURNING:
+                self.move_to_closest_point()
+
+            elif self.state == STATE_STOP:
+                self.stop()
+    
+
+# Usage example
+if __name__ == "__main__":
+    # Initialize system
+    pioneer = Pioneer3at()
+    navigator = Bug1(pioneer, Q_GOAL)
+    
+    # Start navigation
+    navigator.run()
