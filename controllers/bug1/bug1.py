@@ -105,7 +105,7 @@ class Bug1:
     
     def move_to_closest_point(self):
         if self.first_route_duration > self.sec_route_duration:
-            self.movement.rotate(self.movement.get_yaw() + (2*TURN_ANGLE if self.movement.current_wall_side == 'right' else -2*TURN_ANGLE) % 360, True)
+            self.movement.rotate(self.movement.get_yaw() + (2*TURN_ANGLE if self.movement.current_wall_side == 'right' else -2*TURN_ANGLE) % 360)
             self.movement.current_wall_side = 'right' if  self.movement.current_wall_side == 'left' else 'left'
             self.first_route_duration = self.sec_route_duration
         
