@@ -40,25 +40,8 @@ class Pioneer3at:
     @property
     def position(self):
         return self.gps.getValues()[:2]
-    
-    @property
-    def orientation(self):
-        compass_values = self.compass.getValues()
-        return math.atan2(compass_values[0], compass_values[1])
-    
-    def get_sonar_readings(self):
-        return [s.getValue() for s in self.sonars]
-    
-    def set_speeds(self, left, right):
-        left = max(min(left, 4), 0)
-        right = max(min(right, 4), 0)
-        self.wheels['front_left'].setVelocity(left)
-        self.wheels['back_left'].setVelocity(left)
-        self.wheels['front_right'].setVelocity(right)
-        self.wheels['back_right'].setVelocity(right)
         
     def stop(self):
-        self.set_speeds(0, 0)
         sys.exit(0)
         
     def step(self):
@@ -73,6 +56,7 @@ class Bug1:
         self.goal_threshold = 0.2
         self.return_threshold = 0.4
         
+        self.obstacles_pos = []
         self.obstacle_entry = None
         self.closest_point = None
         self.min_distance = float('inf')
@@ -104,13 +88,19 @@ class Bug1:
             self.sec_route_duration = self.robot.robot.getTime()-self.init_sec_route_time
             self.init_first_route_time = None
             self.state = STATE_RETURNING
+            self.obstacle_entry = None
+
     
     def move_to_closest_point(self):
         if self.first_route_duration > self.sec_route_duration:
             self.movement.rotate(self.get_yaw() + (2*TURN_ANGLE if self.movement.current_wall_side == 'right' else -2*TURN_ANGLE) % 360)
             self.movement.current_wall_side = 'right' if  self.movement.current_wall_side == 'left' else 'right'
-
-        self.state = STATE_NORMAL
+            self.first_route_duration = self.sec_route_duration
+        
+        self.movement.circumvent_obstacle()
+        if self.distance_between(self.robot.position, self.closest_point) < self.goal_threshold:
+            self.state = STATE_NORMAL
+            self.closest_point = None
 
     def distance_to_goal(self):
         return math.hypot(self.goal[0]-self.robot.position[0],
@@ -118,7 +108,16 @@ class Bug1:
     
     def distance_between(self, p1, p2):
         return math.hypot(p1[0]-p2[0], p1[1]-p2[1])
+
+    def is_obstacle_traversed(self, obstacle_pos):
+        if not len(self.obstacles_pos):
+            return False
+        for obst in self.obstacles_pos:
+            if self.distance_between(obstacle_pos, obst):
+                return True
+        return False
     
+
     def at_goal(self):
         return self.distance_to_goal() < self.goal_threshold
     
@@ -131,8 +130,9 @@ class Bug1:
         
             if self.state == STATE_NORMAL:
                 self.state, entry = self.movement.move()
-                if entry is not None and self.obstacle_entry is None:
+                if entry is not None and self.obstacle_entry is None and not self.is_obstacle_traversed(entry):
                     self.obstacle_entry = entry
+                    self.obstacles_pos.append(entry)
 
             elif self.state == STATE_CIRCUMVENT:
                 if self.init_first_route_time is None:
