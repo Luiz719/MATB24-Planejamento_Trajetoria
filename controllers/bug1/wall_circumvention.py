@@ -23,10 +23,12 @@ class Circumvention():
     def get_yaw(self):
         return math.degrees(self.robot.sensors['imu'].getRollPitchYaw()[2]) % 360
 
-    def rotate(self, target_angle):
+    def rotate(self, target_angle, o=False):
         """Precision turn using IMU"""
         while self.robot.step() != -1:
             current = self.get_yaw()
+            if o:
+                print("current=",current)
             error = (target_angle - current + 180) % 360 - 180
             if abs(error) < 1.0:
                 break
@@ -76,9 +78,20 @@ class Circumvention():
             else:
                 self.start_circumvention('right')
         else:
-            self.set_speeds(MAX_SPEED, MAX_SPEED)
+            if left > right:
+                error = (WALL_THRESHOLD - right) * 3*TURN_FACTOR
+                self.set_speeds(MAX_SPEED - error, MAX_SPEED + error)
+            else: 
+                error = (WALL_THRESHOLD - left) * 3*TURN_FACTOR
+                self.set_speeds(MAX_SPEED + error, MAX_SPEED - error)
 
         return self.current_state, None
+    
+    def returning(self):
+        if self.current_state == STATE_CIRCUMVENT:
+            self.circumvent_obstacle()
+        else:
+            self.move()
 
     def circumvent_obstacle(self):
     

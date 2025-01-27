@@ -40,8 +40,17 @@ class Pioneer3at:
     @property
     def position(self):
         return self.gps.getValues()[:2]
+    
+    def set_speeds(self, left, right):
+        left = max(min(left, 4), 0)
+        right = max(min(right, 4), 0)
+        self.wheels['front_left'].setVelocity(left)
+        self.wheels['back_left'].setVelocity(left)
+        self.wheels['front_right'].setVelocity(right)
+        self.wheels['back_right'].setVelocity(right)
         
     def stop(self):
+        self.set_speeds(0,0)
         sys.exit(0)
         
     def step(self):
@@ -54,7 +63,7 @@ class Bug1:
         self.state = STATE_NORMAL
         
         self.goal_threshold = 0.2
-        self.return_threshold = 0.4
+        self.return_threshold = 0.1
         
         self.obstacles_pos = []
         self.obstacle_entry = None
@@ -66,6 +75,14 @@ class Bug1:
         self.sec_route_duration = None
 
         self.movement = Circumvention(self.robot)
+
+    def check_return_finish(self):
+        current_pos = self.robot.position
+        if self.obstacle_entry is not None and self.distance_between(current_pos, self.obstacle_entry) < self.return_threshold:
+            print("Completed boundary circumnavigation")
+            self.sec_route_duration = self.robot.robot.getTime()-self.init_sec_route_time
+            self.init_first_route_time = None
+            self.state = STATE_RETURNING
 
     def boundary_following(self):
         """Follow obstacle boundary until loop closure"""
@@ -83,24 +100,23 @@ class Bug1:
         current_pos = self.robot.position
 
         # Check loop closure
-        if self.distance_between(current_pos, self.obstacle_entry) < self.return_threshold:
-            print("Completed boundary circumnavigation")
-            self.sec_route_duration = self.robot.robot.getTime()-self.init_sec_route_time
-            self.init_first_route_time = None
-            self.state = STATE_RETURNING
-            self.obstacle_entry = None
+        self.check_return_finish()
 
     
     def move_to_closest_point(self):
         if self.first_route_duration > self.sec_route_duration:
-            self.movement.rotate(self.get_yaw() + (2*TURN_ANGLE if self.movement.current_wall_side == 'right' else -2*TURN_ANGLE) % 360)
-            self.movement.current_wall_side = 'right' if  self.movement.current_wall_side == 'left' else 'right'
+            self.movement.rotate(self.movement.get_yaw() + (2*TURN_ANGLE if self.movement.current_wall_side == 'right' else -2*TURN_ANGLE) % 360, True)
+            self.movement.current_wall_side = 'right' if  self.movement.current_wall_side == 'left' else 'left'
             self.first_route_duration = self.sec_route_duration
         
-        self.movement.circumvent_obstacle()
-        if self.distance_between(self.robot.position, self.closest_point) < self.goal_threshold:
+        self.movement.returning()
+        if self.distance_between(self.robot.position, self.closest_point) < 0.56:
+            print("Closest point reached")
             self.state = STATE_NORMAL
             self.closest_point = None
+            self.obstacle_entry = None
+            self.robot.stop()
+ 
 
     def distance_to_goal(self):
         return math.hypot(self.goal[0]-self.robot.position[0],
@@ -110,7 +126,7 @@ class Bug1:
         return math.hypot(p1[0]-p2[0], p1[1]-p2[1])
 
     def is_obstacle_traversed(self, obstacle_pos):
-        if not len(self.obstacles_pos):
+        if not len(self.obstacles_pos) or obstacle_pos is None:
             return False
         for obst in self.obstacles_pos:
             if self.distance_between(obstacle_pos, obst):
@@ -133,6 +149,8 @@ class Bug1:
                 if entry is not None and self.obstacle_entry is None and not self.is_obstacle_traversed(entry):
                     self.obstacle_entry = entry
                     self.obstacles_pos.append(entry)
+                else:
+                    self.check_return_finish()
 
             elif self.state == STATE_CIRCUMVENT:
                 if self.init_first_route_time is None:
@@ -142,9 +160,6 @@ class Bug1:
             elif self.state == STATE_RETURNING:
                 self.move_to_closest_point()
 
-            elif self.state == STATE_STOP:
-                self.stop()
-    
 
 if __name__ == "__main__":
     pioneer = Pioneer3at()

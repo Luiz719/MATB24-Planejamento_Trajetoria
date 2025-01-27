@@ -1,6 +1,6 @@
 # Configuration Parameters
 MAX_SPEED = 6.28            
-WALL_THRESHOLD = 0.3       # Wall detection distance [m]
+WALL_THRESHOLD = 0.34       # Wall detection distance [m]
 TURN_FACTOR = 0.25           # turn gain
 TURN_ANGLE = 90             # Default turn angle [degrees]
 MOVE_DISTANCE = 0.07        # Straight movement distance for circumvention [m]
